@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Acuario Interactivo – Proyecto Integrador Unidad 5</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.3/p5.min.js"></script>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#000; overflow:hidden; font-family:'Courier New', monospace; }
+    #hud {
+      position:fixed; top:14px; left:14px; color:#cef;
+      font-size:12px; line-height:1.9; pointer-events:none;
+      text-shadow:0 0 8px #08f; z-index:10;
+    }
+    #hud .titulo { font-size:15px; color:#fff; letter-spacing:2px; margin-bottom:4px; }
+    #hud .sep    { color:#235; }
+    #hud .req    { color:#4fa; font-size:10px; }
+  </style>
+</head>
+<body>
+<div id="hud">
+  <div class="titulo">🐠 Acuario Interactivo</div>
+  <div class="sep">─────────────────────</div>
+  <div>Click · agregar pez</div>
+  <div>Drag  · mover vista</div>
+  <div>Scroll · zoom</div>
+  <div class="sep">─────────────────────</div>
+  <div>P · pausa &nbsp; C · paleta</div>
+  <div>T · trails &nbsp; B · burbujas</div>
+  <div>R · reset cámara</div>
+  <div>+ / − · velocidad</div>
+  <div class="sep">─────────────────────</div>
+  <div id="hud_peces">Peces: 5</div>
+  <div id="hud_estado">▶ Corriendo</div>
+  <div id="hud_vel">Vel: 1.0×</div>
+  <div id="hud_fps">FPS: –</div>
+  <div id="hud_frame">Frame: 0</div>
+</div>
+
+<script>
+let paused      = false;
+let speedMult   = 1.0;
+let showTrails  = true;
+let showBubbles = true;
+let paleta      = 0;
+
+let camX = 0, camY = 0;
+let camZoom  = 1.0;
+let zoomObj  = 1.0;
+let isDragging = false;
+let dragPrevX = 0, dragPrevY = 0;
+
+let peces      = [];
+let burbujas   = [];
+let algas      = [];
+let medusas    = [];
+let particulas = [];
+
+const PALETAS = [
+  [[255,100,50],[255,210,0],[80,200,255],[180,100,255],[50,220,120]],
+  [[255,180,180],[255,220,150],[160,255,200],[150,200,255],[255,160,255]],
+  [[255,40,40],[255,140,0],[180,0,220],[0,220,255],[0,255,100]],
+];
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(RGB, 255);
+
+  for (let i = 0; i < 5; i++)
+    crearPez(random(100, width - 100), random(height * 0.15, height * 0.82));
+
+  for (let x = 50; x < width * 1.5; x += random(55, 130))
+    algas.push({
+      x, h: random(50, 140),
+      fase: random(TWO_PI),
+      col: [random(20,70), random(130,220), random(50,120)]
+    });
+
+  for (let i = 0; i < 4; i++)
+    crearMedusa(random(100, width - 100), random(height * 0.1, height * 0.6));
+
+  for (let i = 0; i < 30; i++) crearBurbuja();
+}
+
+function draw() {
+
+  camZoom = lerp(camZoom, zoomObj, 0.08);
+
+  dibujarFondo();
+
+  push();
+    translate(camX, camY);
+    scale(camZoom);
+
+    dibujarRayosDeSol();
+    dibujarArena();
+    dibujarAlgas();
+    if (showBubbles) manejarBurbujas();
+    manejarMedusas();
+    manejarParticulas();
+
+    for (let p of peces) {
+      if (!paused) moverPez(p);
+      dibujarTrail(p);
+      dibujarPez(p);
+    }
+
+  pop();
+
+  if (frameCount % 12 === 0) actualizarHUD();
+}
+
+function dibujarFondo() {
+  for (let y = 0; y < height; y++) {
+    let pct = y / height;
+
+    stroke(
+      lerp(0,  15,  pct),
+      lerp(30, 90,  pct),
+      lerp(110,165, pct)
+    );
+    line(0, y, width, y);
+  }
+  noStroke();
+}
+
+function dibujarRayosDeSol() {
+  push();
+  blendMode(ADD);
+  noStroke();
+  for (let i = 0; i < 8; i++) {
+
+    let oscX  = sin(frameCount * 0.008 + i * 0.9) * 35;
+    let alfa  = lerp(6, 20, (sin(frameCount * 0.005 + i) + 1) / 2);
+    let xBase = (i / 8) * width * (1 / camZoom) + 40;
+    fill(180, 225, 255, alfa);
+    triangle(
+      xBase + oscX,      0,
+      xBase + oscX - 25, 0,
+      xBase + oscX + 90, height * 0.75 * (1 / camZoom)
+    );
+  }
+  blendMode(BLEND);
+  pop();
+}
+
+function dibujarArena() {
+  let yArena = height * 0.87;
+  push();
+  noStroke();
+
+  let puls = (sin(frameCount * 0.015) + 1) / 2;
+  fill(lerp(175, 210, puls), lerp(148, 175, puls), 75, 235);
+  rect(-500, yArena, width * 2, height * 0.15);
+
+  fill(90, 80, 70, 190);
+  ellipse(width * 0.10, yArena + 10, 65, 28);
+  ellipse(width * 0.50, yArena + 12, 48, 22);
+  ellipse(width * 0.80, yArena + 8,  58, 26);
+  fill(70, 60, 55, 160);
+  ellipse(width * 0.30, yArena + 14, 35, 16);
+  ellipse(width * 0.65, yArena + 11, 42, 18);
+  pop();
+}
+
+function dibujarAlgas() {
+  push();
+  strokeWeight(4);
+  noFill();
+  for (let a of algas) {
+    let segs = 7;
+    beginShape();
+    for (let s = 0; s <= segs; s++) {
+      let fy = height * 0.87 - (s / segs) * a.h;
+
+      let fx = a.x + sin(frameCount * 0.018 + a.fase + s * 0.75) * 13;
+
+      stroke(a.col[0], a.col[1], a.col[2], lerp(60, 210, s / segs));
+      vertex(fx, fy);
+    }
+    endShape();
+  }
+  pop();
+}
+
+function crearBurbuja() {
+  burbujas.push({
+    x:      random(width),
+    y:      random(height * 0.25, height + 10),
+    r:      random(4, 15),
+    vel:    random(0.4, 1.3),
+    wobble: random(TWO_PI),
+  });
+}
+
+function manejarBurbujas() {
+  push();
+  noFill();
+  strokeWeight(1.2);
+  for (let b of burbujas) {
+    if (!paused) {
+      b.y      -= b.vel * speedMult;
+      b.wobble += 0.035 * speedMult;
+      b.x      += sin(b.wobble) * 0.7;
+    }
+
+    let alfa = lerp(200, 30, 1 - b.y / height);
+    stroke(180, 230, 255, alfa);
+    ellipse(b.x, b.y, b.r * 2);
+    noStroke();
+    fill(255, 255, 255, alfa * 0.35);
+    ellipse(b.x - b.r * 0.3, b.y - b.r * 0.3, b.r * 0.55);
+    noFill();
+    stroke(180, 230, 255, alfa);
+    if (b.y < -20) { b.y = height * 0.9 + random(20); b.x = random(width); }
+  }
+
+  if (!paused && frameCount % 28 === 0 && burbujas.length < 50)
+    crearBurbuja();
+  pop();
+}
+
+function crearMedusa(x, y) {
+  medusas.push({
+    x, y,
+    fase:  random(TWO_PI),
+    r:     random(28, 55),
+    col:   [random(150,255), random(50,150), random(180,255)],
+    vel:   random(0.2, 0.6),
+  });
+}
+
+function manejarMedusas() {
+  for (let m of medusas) {
+    if (!paused) {
+
+      m.y += sin(frameCount * 0.02 + m.fase) * 0.4 * speedMult;
+      m.x += cos(frameCount * 0.015 + m.fase) * 0.25 * speedMult;
+
+      if (m.x < 0)      m.x = width;
+      if (m.x > width)  m.x = 0;
+      if (m.y < 20)     m.y = height * 0.6;
+      if (m.y > height * 0.85) m.y = height * 0.1;
+    }
+    dibujarMedusa(m);
+  }
+}
+
+function dibujarMedusa(m) {
+  push();
+  translate(m.x, m.y);
+
+  rotate(sin(frameCount * 0.01 + m.fase) * 0.15);
+
+  noStroke();
+  let pulso = (sin(frameCount * 0.06 + m.fase) + 1) / 2;
+
+  let s = lerp(0.85, 1.15, pulso);
+  scale(s);
+
+  fill(m.col[0], m.col[1], m.col[2], 120);
+  arc(0, 0, m.r * 2, m.r * 1.6, PI, TWO_PI);
+  fill(m.col[0], m.col[1], m.col[2], 60);
+  ellipse(0, 0, m.r * 2, m.r * 0.4);
+
+  stroke(m.col[0], m.col[1], m.col[2], lerp(80, 160, pulso));
+  strokeWeight(1.5);
+  noFill();
+  let numTent = 8;
+  for (let i = 0; i < numTent; i++) {
+    let xTent = lerp(-m.r * 0.8, m.r * 0.8, i / (numTent - 1));
+    let yOnd  = sin(frameCount * 0.08 + m.fase + i * 0.7) * 10;
+    beginShape();
+    for (let j = 0; j <= 5; j++) {
+      let ty = j * m.r * 0.38;
+      let tx = xTent + sin(frameCount * 0.06 + i + j * 0.5) * 6;
+      vertex(tx, ty);
+    }
+    endShape();
+  }
+  pop();
+}
+
+function crearPez(x, y) {
+  let cols = PALETAS[paleta];
+  peces.push({
+    x, y,
+    tx: random(80, width - 80),
+    ty: random(height * 0.1, height * 0.82),
+    vel:   random(0.9, 2.2),
+    tam:   random(18, 44),
+    col:   cols[floor(random(cols.length))],
+    fase:  random(TWO_PI),
+    dir:   1,
+    timer: 0,
+    pausa: random(80, 240),
+    trail: [],
+  });
+}
+
+function moverPez(p) {
+  p.timer += speedMult;
+
+  if (p.timer > p.pausa || dist(p.x, p.y, p.tx, p.ty) < 18) {
+    p.tx    = random(80, width  - 80);
+    p.ty    = random(height * 0.1, height * 0.82);
+    p.pausa = random(80, 240);
+    p.timer = 0;
+  }
+
+  p.trail.push({ x: p.x, y: p.y });
+  if (p.trail.length > 18) p.trail.shift();
+
+  let spd = p.vel * 0.014 * speedMult;
+  p.x = lerp(p.x, p.tx, spd);
+  p.y = lerp(p.y, p.ty, spd);
+
+  p.dir = p.tx > p.x ? 1 : -1;
+}
+
+function dibujarTrail(p) {
+  if (!showTrails || p.trail.length < 2) return;
+  push();
+  noStroke();
+  for (let i = 0; i < p.trail.length; i++) {
+    let tp  = p.trail[i];
+    let pct = i / p.trail.length;
+
+    let r    = lerp(1, p.tam * 0.45, pct);
+    let alfa = lerp(0, 90,           pct);
+    fill(p.col[0], p.col[1], p.col[2], alfa);
+    ellipse(tp.x, tp.y, r * 2);
+  }
+  pop();
+}
+
+function dibujarPez(p) {
+  push();
+  translate(p.x, p.y);
+
+  scale(p.dir, 1);
+
+  let ondula = sin(frameCount * 0.12 * speedMult + p.fase) * 5.5;
+
+  push();
+  noStroke();
+  fill(0, 0, 20, 55);
+  ellipse(ondula * 0.3 + 3, 6, p.tam * 1.85, p.tam * 0.45);
+  pop();
+
+  push();
+  translate(-p.tam * 0.62, ondula * 0.4);
+
+  rotate(sin(frameCount * 0.15 * speedMult + p.fase) * 0.42);
+  noStroke();
+  fill(p.col[0], p.col[1], p.col[2], 210);
+  triangle(0, 0, -p.tam * 0.58, -p.tam * 0.48, -p.tam * 0.58, p.tam * 0.48);
+  pop();
+
+  push();
+  translate(ondula * 0.18, 0);
+  noStroke();
+  fill(p.col[0], p.col[1], p.col[2]);
+  ellipse(0, 0, p.tam * 1.92, p.tam);
+
+  fill(
+    lerp(p.col[0], 255, 0.5),
+    lerp(p.col[1], 255, 0.5),
+    lerp(p.col[2], 255, 0.5),
+    155
+  );
+  ellipse(p.tam * 0.12, p.tam * 0.16, p.tam * 1.1, p.tam * 0.48);
+
+  fill(p.col[0]*0.65, p.col[1]*0.65, p.col[2]*0.65, 200);
+  triangle(
+    0,             -p.tam * 0.5,
+    p.tam * 0.28,  -p.tam * 0.88,
+    -p.tam * 0.18, -p.tam * 0.5
+  );
+
+  fill(255);
+  ellipse(p.tam * 0.54, -p.tam * 0.04, p.tam * 0.3);
+  fill(10, 10, 30);
+  ellipse(p.tam * 0.56, -p.tam * 0.04, p.tam * 0.15);
+  fill(255, 255, 255, 200);
+  ellipse(p.tam * 0.60, -p.tam * 0.09, p.tam * 0.06);
+  pop();
+  pop();
+}
+
+function emitirParticulas(mx, my) {
+
+  let sx = (mx - camX) / camZoom;
+  let sy = (my - camY) / camZoom;
+  for (let i = 0; i < 45; i++) {
+    let ang = random(TWO_PI);
+    let spd = random(1.2, 4.5);
+    particulas.push({
+      x: sx, y: sy,
+      vx: cos(ang) * spd,
+      vy: sin(ang) * spd - random(1, 2),
+      r:  random(3, 9),
+      vida: 1.0,
+      decay: random(0.014, 0.030),
+      col: PALETAS[paleta][floor(random(PALETAS[paleta].length))],
+    });
+  }
+}
+
+function manejarParticulas() {
+  push();
+  noStroke();
+  for (let i = particulas.length - 1; i >= 0; i--) {
+    let p = particulas[i];
+    if (!paused) {
+
+      p.x    += p.vx * speedMult;
+      p.y    += p.vy * speedMult;
+      p.vy   += 0.06 * speedMult;
+      p.vida -= p.decay * speedMult;
+    }
+
+    let r = lerp(30,  p.col[0], p.vida);
+    let g = lerp(100, p.col[1], p.vida);
+    let b = lerp(180, p.col[2], p.vida);
+    fill(r, g, b, p.vida * 230);
+    ellipse(p.x, p.y, p.r * p.vida * 2);
+    if (p.vida <= 0) particulas.splice(i, 1);
+  }
+  pop();
+}
+
+function mousePressed() {
+  isDragging = false;
+  dragPrevX  = mouseX;
+  dragPrevY  = mouseY;
+}
+
+function mouseDragged() {
+
+  isDragging = true;
+  camX += mouseX - dragPrevX;
+  camY += mouseY - dragPrevY;
+  dragPrevX = mouseX;
+  dragPrevY = mouseY;
+}
+
+function mouseReleased() {
+  if (!isDragging && mouseY < height * 0.95) {
+
+    crearPez(mouseX, mouseY);
+    emitirParticulas(mouseX, mouseY);
+  }
+  isDragging = false;
+}
+
+function mouseWheel(e) {
+
+  zoomObj = constrain(zoomObj - e.delta * 0.001, 0.4, 3.0);
+  return false;
+}
+
+function keyPressed() {
+  let k = key.toUpperCase();
+  if (k === 'P') paused = !paused;
+  if (k === 'T') showTrails  = !showTrails;
+  if (k === 'B') showBubbles = !showBubbles;
+  if (k === 'R') { camX = 0; camY = 0; zoomObj = 1.0; }
+  if (k === 'C') {
+    paleta = (paleta + 1) % PALETAS.length;
+
+    for (let p of peces)
+      p.col = PALETAS[paleta][floor(random(PALETAS[paleta].length))];
+  }
+
+  if (key === '+' || key === '=') speedMult = min(speedMult + 0.25, 4.0);
+  if (key === '-' || key === '_') speedMult = max(speedMult - 0.25, 0.25);
+}
+
+function actualizarHUD() {
+  document.getElementById('hud_peces').textContent  = `Peces: ${peces.length}`;
+  document.getElementById('hud_estado').textContent = paused ? '⏸ Pausado' : '▶ Corriendo';
+  document.getElementById('hud_vel').textContent    = `Vel: ${speedMult.toFixed(2)}×`;
+  document.getElementById('hud_fps').textContent    = `FPS: ${floor(frameRate())}`;
+
+  document.getElementById('hud_frame').textContent  = `Frame: ${frameCount}`;
+}
+
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }</script>
+</body>
+</html>
